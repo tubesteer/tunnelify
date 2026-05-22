@@ -1,0 +1,94 @@
+name: Go Build and Release
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Binary
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go-version: ['1.22']
+        include:
+          - os: ubuntu-latest
+            go-os: linux
+            go-arch: amd64
+            binary-name: tunnelify-linux-amd64
+          # Tambahan target untuk Android ARM64 (Termux / Linux Environment di Android)
+          - os: ubuntu-latest
+            go-os: android
+            go-arch: arm64
+            binary-name: tunnelify-android-arm64
+          - os: windows-latest
+            go-os: windows
+            go-arch: amd64
+            binary-name: tunnelify-windows-amd64.exe
+          - os: macos-latest
+            go-os: darwin
+            go-arch: amd64
+            binary-name: tunnelify-darwin-amd64
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+
+    - name: Initialize Go Module & Dependencies
+      run: |
+        go mod init tunnelify || true
+        go get gopkg.in/yaml.v3
+        go get golang.org/x/crypto/ssh
+        go mod tidy
+
+    - name: Build Binary
+      env:
+        GOOS: ${{ matrix.go-os }}
+        GOARCH: ${{ matrix.go-arch }}
+        CGO_ENABLED: 0
+      run: |
+        go build -v -ldflags="-s -w" -o ${{ matrix.binary-name }} .
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.binary-name }}-go${{ matrix.go-version }}
+        path: ${{ matrix.binary-name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Flatten Artifacts Directory
+      run: |
+        mkdir -p dist
+        find artifacts/ -type f -exec cp {} dist/ \;
+        ls -l dist/
+
+    - name: Release Assets
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
